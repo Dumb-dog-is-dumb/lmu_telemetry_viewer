@@ -25,6 +25,7 @@ const CHANNELS = [
   { key: "Ground Speed", canvas: "chartSpeed", color: "#4fa8ff" },
   { key: "Throttle Pos", canvas: "chartThrottle", color: "#4fd672" },
   { key: "Brake Pos", canvas: "chartBrake", color: "#ff5d5d" },
+  { key: "Steering Pos", canvas: "chartSteering", color: "#b366ff" },
   { key: "Gear", canvas: "chartGear", color: "#f5c542", stepped: true },
 ];
 
@@ -414,8 +415,10 @@ async function loadFiles() {
   for (const f of files) {
     const opt = document.createElement("option");
     opt.value = f.file;
-    const when = new Date(f.modified).toLocaleString();
-    opt.textContent = `${f.track} — ${f.sessionType || "?"} — ${when} (${f.sizeMB} MB)`;
+    const when = new Date(f.sessionTime).toLocaleString();
+    const car = f.car ? ` — ${f.car}` : "";
+    const fastLap = f.fastestLap != null ? ` — best lap ${formatLapTime(f.fastestLap)}` : "";
+    opt.textContent = `${f.track} — ${f.sessionType || "?"} — ${when}${car}${fastLap}`;
     sessionSelect.appendChild(opt);
   }
   setStatus("");

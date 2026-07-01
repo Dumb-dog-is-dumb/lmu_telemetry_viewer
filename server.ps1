@@ -14,13 +14,44 @@ if (-not (Test-Path $TelemetryDir)) { throw "Telemetry folder not found: $Teleme
 
 # Channels we expose to the UI. Each is either "regular" (fixed-frequency, row-indexed,
 # needs a computed time axis) or "irregular" (has its own ts column, e.g. discrete events).
-$RegularChannels = @("Ground Speed", "Throttle Pos", "Brake Pos", "GPS Latitude", "GPS Longitude", "G Force Lat", "G Force Long")
+$RegularChannels = @("Ground Speed", "Throttle Pos", "Brake Pos", "Steering Pos", "GPS Latitude", "GPS Longitude", "G Force Lat", "G Force Long")
 $IrregularChannels = @("Gear")
 $AllowedChannels = $RegularChannels + $IrregularChannels
 
 # Small in-memory cache so repeated requests against the same file don't re-run
 # metadata/frequency lookups every time.
 $SessionCache = @{}
+
+# Cache for the /api/files summary (car name + fastest complete lap) keyed by path only.
+# Note: opening these files with duckdb.exe touches LastWriteTime (looks like a WAL
+# checkpoint on open), so mtime can't be used as a cache-invalidation key here - it would
+# never hit. Matches $SessionCache, which has the same path-only-key assumption.
+$FileSummaryCache = @{}
+
+function Get-FileSummary {
+    param([string]$DbPath)
+    if ($FileSummaryCache.ContainsKey($DbPath)) { return $FileSummaryCache[$DbPath] }
+
+    $car = $null
+    $fastestLap = $null
+    try {
+        # "Lap Time" records a completed lap's duration at the ts where the *next* lap
+        # starts; the out-lap (lap 0) is always 0.0 and the final in-progress lap never
+        # gets an entry, so filtering value > 0 already isolates complete laps.
+        $sql = "SELECT (SELECT value FROM metadata WHERE key='CarName') AS car, " +
+               "(SELECT min(value) FROM `"Lap Time`" WHERE value > 0) AS fastestLap;"
+        $json = Invoke-DuckDb $DbPath $sql
+        $rows = $json | ConvertFrom-Json
+        if ($rows.Count -gt 0) {
+            $car = $rows[0].car
+            if ($null -ne $rows[0].fastestLap) { $fastestLap = [double]$rows[0].fastestLap }
+        }
+    } catch { }
+
+    $summary = [PSCustomObject]@{ car = $car; fastestLap = $fastestLap }
+    $FileSummaryCache[$DbPath] = $summary
+    return $summary
+}
 
 function Invoke-DuckDb {
     param([string]$DbPath, [string]$Sql)
@@ -97,29 +128,36 @@ function Get-SessionInfo {
 
 function Write-JsonResponse {
     param($Context, [string]$Json, [int]$Status = 200)
-    $Context.Response.StatusCode = $Status
-    $Context.Response.ContentType = "application/json; charset=utf-8"
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
-    $Context.Response.ContentLength64 = $bytes.Length
-    $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $Context.Response.OutputStream.Close()
+    # A client that disconnects mid-response (browser cancels a request, HEAD request,
+    # etc.) can make OutputStream.Write/Close throw. That must never escape and kill the
+    # single-threaded listener loop, so every step here is best-effort.
+    try {
+        $Context.Response.StatusCode = $Status
+        $Context.Response.ContentType = "application/json; charset=utf-8"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
+        $Context.Response.ContentLength64 = $bytes.Length
+        $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+    } catch { }
+    try { $Context.Response.OutputStream.Close() } catch { }
 }
 
 function Write-FileResponse {
     param($Context, [string]$Path)
-    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
-    $ct = switch ($ext) {
-        ".html" { "text/html; charset=utf-8" }
-        ".js"   { "application/javascript; charset=utf-8" }
-        ".css"  { "text/css; charset=utf-8" }
-        default { "application/octet-stream" }
-    }
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    $Context.Response.StatusCode = 200
-    $Context.Response.ContentType = $ct
-    $Context.Response.ContentLength64 = $bytes.Length
-    $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-    $Context.Response.OutputStream.Close()
+    try {
+        $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+        $ct = switch ($ext) {
+            ".html" { "text/html; charset=utf-8" }
+            ".js"   { "application/javascript; charset=utf-8" }
+            ".css"  { "text/css; charset=utf-8" }
+            default { "application/octet-stream" }
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        $Context.Response.StatusCode = 200
+        $Context.Response.ContentType = $ct
+        $Context.Response.ContentLength64 = $bytes.Length
+        $Context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+    } catch { }
+    try { $Context.Response.OutputStream.Close() } catch { }
 }
 
 function Get-QueryParams {
@@ -171,26 +209,41 @@ try {
                 Write-FileResponse $context (Join-Path $webDir "style.css")
             }
             elseif ($path -eq "/api/files") {
-                $files = Get-ChildItem -Path $TelemetryDir -Filter "*.duckdb" -File | Sort-Object LastWriteTime -Descending
+                $files = Get-ChildItem -Path $TelemetryDir -Filter "*.duckdb" -File
                 $list = @()
                 foreach ($f in $files) {
-                    # Expected pattern: "<Track>_<SessionType>_<ISO timestamp>.duckdb"
+                    # Expected pattern: "<Track>_<SessionType>_<ISO timestamp>.duckdb". The
+                    # timestamp in the name is the actual session start time and is used for
+                    # display/sort instead of the file's LastWriteTime: opening these files
+                    # with duckdb.exe touches mtime (looks like a WAL checkpoint on open),
+                    # which was silently reordering the list on every /api/files call.
                     $name = $f.BaseName
                     $track = $name
                     $sessionType = ""
-                    $m = [regex]::Match($name, '^(?<track>.+)_(?<type>[A-Za-z]+)_(?<ts>\d{4}-\d{2}-\d{2}T.+)$')
+                    $sessionTime = $f.LastWriteTime
+                    $m = [regex]::Match($name, '^(?<track>.+)_(?<type>[A-Za-z]+)_(?<ts>\d{4})-(?<mo>\d{2})-(?<da>\d{2})T(?<h>\d{2})_(?<mi>\d{2})_(?<s>\d{2})Z$')
                     if ($m.Success) {
                         $track = $m.Groups['track'].Value
                         $sessionType = $m.Groups['type'].Value
+                        $sessionTime = [datetime]::new(
+                            [int]$m.Groups['ts'].Value, [int]$m.Groups['mo'].Value, [int]$m.Groups['da'].Value,
+                            [int]$m.Groups['h'].Value, [int]$m.Groups['mi'].Value, [int]$m.Groups['s'].Value,
+                            [System.DateTimeKind]::Utc)
                     }
+                    $summary = Get-FileSummary $f.FullName
                     $list += [PSCustomObject]@{
                         file        = $f.Name
                         track       = $track
                         sessionType = $sessionType
-                        modified    = $f.LastWriteTime.ToString("o")
+                        sessionTime = $sessionTime.ToString("o")
                         sizeMB      = [math]::Round($f.Length / 1MB, 1)
+                        car         = $summary.car
+                        fastestLap  = $summary.fastestLap
                     }
                 }
+                # @(...) guards against PowerShell unwrapping a single-element pipeline
+                # result to a bare object instead of a one-item array.
+                $list = @($list | Sort-Object sessionTime -Descending)
                 Write-JsonResponse $context ($list | ConvertTo-Json -Depth 5)
             }
             elseif ($path -eq "/api/session") {
