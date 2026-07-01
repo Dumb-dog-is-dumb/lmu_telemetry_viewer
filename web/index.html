@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LMU Telemetry Viewer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>LMU Telemetry Viewer</h1>
+  <div class="controls">
+    <label>Session
+      <select id="sessionSelect"><option>Loading...</option></select>
+    </label>
+    <label>Lap
+      <select id="lapSelect"><option>-</option></select>
+    </label>
+    <button id="resetZoomBtn" type="button">Reset zoom</button>
+    <span id="status"></span>
+  </div>
+  <p class="hint">Drag on a chart to zoom into that range, scroll to zoom in/out, hold shift and drag to pan. All charts stay in sync.</p>
+</header>
+
+<section id="meta" class="meta"></section>
+
+<div class="layout">
+  <main id="charts">
+    <div class="chart-box">
+      <h2>Speed <span class="unit">km/h</span></h2>
+      <canvas id="chartSpeed" height="45"></canvas>
+    </div>
+    <div class="chart-box">
+      <h2>Throttle <span class="unit">%</span></h2>
+      <canvas id="chartThrottle" height="45"></canvas>
+    </div>
+    <div class="chart-box">
+      <h2>Brake <span class="unit">%</span></h2>
+      <canvas id="chartBrake" height="45"></canvas>
+    </div>
+    <div class="chart-box">
+      <h2>Gear</h2>
+      <canvas id="chartGear" height="45"></canvas>
+    </div>
+  </main>
+
+  <aside class="map-panel">
+    <div class="chart-box map-box">
+      <h2>Track Map</h2>
+      <div class="chart-fill"><canvas id="chartMap"></canvas></div>
+    </div>
+    <div class="chart-box grip-box">
+      <h2>Grip Circle <span class="unit">lateral G vs longitudinal G, at hovered time</span></h2>
+      <div class="chart-fill"><canvas id="chartGrip"></canvas></div>
+    </div>
+  </aside>
+</div>
+
+<script src="/chart.umd.min.js"></script>
+<script src="/chartjs-plugin-zoom.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

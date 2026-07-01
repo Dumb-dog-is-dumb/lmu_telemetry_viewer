@@ -1,0 +1,184 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1e2127;
+  --border: #2c313a;
+  --text: #e6e8eb;
+  --muted: #9aa2ad;
+  --accent: #4fa8ff;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--muted);
+  gap: 4px;
+}
+
+select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-width: 260px;
+  font-size: 13px;
+}
+
+#status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+.hint {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  width: 100%;
+}
+
+.meta {
+  padding: 10px 24px;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.meta b { color: var(--text); }
+
+.layout {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 24px;
+  display: flex;
+  align-items: stretch;
+  gap: 20px;
+}
+
+/* The graph column is independent of the side panels' height: it just takes its natural
+   content height instead of stretching to match, so the two columns aren't grid-locked. */
+main {
+  flex: 1;
+  min-width: 0;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* The side panels fill all available vertical space (viewport height minus header/meta),
+   with a sane floor so they don't collapse on short windows. Track Map and Grip Circle
+   split that space evenly via flex: 1 1 0 below. */
+.map-panel {
+  width: 640px;
+  flex-shrink: 0;
+  min-height: 700px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.map-box,
+.grip-box {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* position:relative + absolutely-filled canvas is the standard way to let Chart.js's
+   responsive resizing fill a flexbox-sized container instead of a fixed pixel height. */
+.chart-fill {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.chart-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.chart-box h2 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.chart-box .unit {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-box canvas {
+  width: 100% !important;
+  height: 140px !important;
+}
+
+/* Must come after ".chart-box canvas" above: equal specificity, so source order decides
+   the winner, and map/grip need to override the fixed 140px rule with a container fill. */
+.chart-fill canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+}
