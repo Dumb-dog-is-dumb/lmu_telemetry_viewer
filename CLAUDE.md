@@ -10,8 +10,10 @@ This is separate from the game's `.Vcr` replay files (`UserData\Replays\`), whic
 undocumented proprietary binary format deliberately NOT parsed — the DuckDB export covers
 everything needed and was the much better path.
 
-App shows Speed/Throttle/Brake/Gear time-series per lap, a track map (from GPS-shaped
-position channels), and a G-G "grip circle", all mouse-synced via hover.
+App shows Speed/Throttle/Brake/Steering/Gear time-series per lap, a track map (from
+GPS-shaped position channels), and a G-G "grip circle", all mouse-synced via hover. The
+session picker also shows each file's car and fastest *complete* lap (see `"Lap Time"`
+semantics below).
 
 ## Architecture — and why it looks like this
 
@@ -45,6 +47,13 @@ available, there's no strong reason to rewrite something that already works.
   rowid→timestamp conversion for every regular channel. See `Get-SessionInfo` in server.ps1.
 - Lap boundaries: `"Lap"` table (`ts`, `value`=lap number). Lap window = `[thisLap.ts,
   nextLap.ts)`; last lap's end = `max("GPS Time")`.
+- `"Lap Time"` (`ts`, `value`) records a completed lap's duration at the `ts` where the
+  *next* lap starts — e.g. `{ts: 299.82, value: 113.02}` means the lap that started at
+  ts=186.82 took 113.02s. The out-lap (lap 0) always shows `value: 0.0`, and the final
+  in-progress lap (recording stopped mid-lap) never gets an entry at all. So `WHERE value >
+  0` on this table already isolates genuinely completed laps — used in `Get-FileSummary` in
+  server.ps1 to compute each session's fastest complete lap for the session picker, without
+  having to separately reason about out-laps/in-laps.
 - Allow-list of exposed channels: `$RegularChannels` / `$IrregularChannels` near the top of
   `server.ps1`. **Extend those arrays (and confirm the channel exists in
   `channelsList`/`SHOW TABLES`) before wiring up any new graph** — `/api/channel` rejects
@@ -96,6 +105,27 @@ available, there's no strong reason to rewrite something that already works.
    process tree is cleaned up (dies a few seconds later, no visible reason). Fix: run
    `server.ps1` directly (not via `Start-Process`) inside a tool call using
    `run_in_background: true`.
+7. **Opening a `.duckdb` file with `duckdb.exe` bumps its `LastWriteTime`** (looks like a WAL
+   checkpoint on open), even for a read-only query. `/api/files` used to sort and cache-key
+   on `LastWriteTime` — every read silently reordered the session picker and defeated the
+   file-summary cache (each request got a "new" cache key). Fixed: sort/display by the
+   session-start timestamp embedded in the filename (`<Track>_<Type>_<ISO
+   timestamp>.duckdb`), and key `$FileSummaryCache`/`$SessionCache` on file path alone, never
+   on mtime.
+8. **`HttpListenerResponse.OutputStream.Write`/`.Close` can throw** if the client disconnects
+   mid-response (cancelled request, HEAD request, etc.) — `ProtocolViolationException:
+   "Bytes to be written to the stream exceed the Content-Length..."` was observed. Since the
+   main loop's per-request `catch` block calls `Write-JsonResponse` again to send a 500, an
+   unguarded throw there escapes the catch too and kills the entire single-threaded listener
+   (looks like the whole server randomly dying). `Write-JsonResponse`/`Write-FileResponse`
+   now wrap every response-writing step in its own `try {} catch {}` — a broken response
+   must never propagate.
+9. **Don't grep `Get-CimInstance Win32_Process` for `*server.ps1*` to find running instances
+   — the diagnostic command's own `-Command "..."` string contains the literal text
+   `server.ps1` and matches itself.** Looked exactly like a runaway respawn loop (new PIDs
+   every check) when it was really the same one-or-zero real servers plus one self-match each
+   time. Use `Get-NetTCPConnection -LocalPort 8787` (ground truth: is anything actually
+   listening) instead of process-list text matching.
 
 ## Running it
 
@@ -105,6 +135,9 @@ available, there's no strong reason to rewrite something that already works.
 - No build step for frontend — edit `web/*.html|css|js`, refresh the page, done.
 - **Server restart required** after editing `server.ps1` (e.g. adding a channel to the
   allow-list).
+- `.claude/launch.json` defines a `telemetry-viewer` config (port 8787) for the Claude Code
+  preview tool (`preview_start`/`preview_stop`) — prefer that over manually backgrounding
+  `server.ps1` via Bash when a coding agent needs to drive/screenshot the app.
 
 ## Future ideas (not commitments — data exists, UI doesn't)
 
