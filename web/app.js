@@ -433,12 +433,22 @@ async function loadSession(file) {
 
   const metaMap = {};
   for (const kv of info.metadata) metaMap[kv.key] = kv.value;
+
+  const front = metaMap.TireCompoundFront;
+  const rear = metaMap.TireCompoundRear;
+  let compound = "-";
+  if (front || rear) {
+    compound = front === rear ? (front ?? rear) : `Front: ${front ?? "?"} / Rear: ${rear ?? "?"}`;
+  }
+
   metaEl.innerHTML = `
     <span><b>Track:</b> ${metaMap.TrackName ?? "-"}</span>
     <span><b>Car:</b> ${metaMap.CarName ?? "-"}</span>
+    <span><b>Class:</b> ${metaMap.CarClass ?? "-"}</span>
     <span><b>Session:</b> ${metaMap.SessionType ?? "-"}</span>
     <span><b>Driver:</b> ${metaMap.DriverName ?? "-"}</span>
     <span><b>Weather:</b> ${metaMap.WeatherConditions ?? "-"}</span>
+    <span><b>Tire Compound:</b> ${compound}</span>
   `;
 
   lapSelect.innerHTML = "";
@@ -478,6 +488,14 @@ async function loadLap(lapValue, file) {
   }
 
   setStatus("Loading telemetry...");
+  // Each channel resets its own zoom independently below, and resetZoom() fires the same
+  // onZoomComplete callback a real user zoom does, which triggers syncZoomAcrossCharts.
+  // Without this guard, chart A's reset can sync-force chart B's axis before chart B has
+  // run its own reset - chart B's zoom plugin then sees its just-forced range as "already
+  // correct", skips refreshing its cached original range, and gets permanently stuck
+  // rejecting further zoom-out/reset attempts. Suppress cross-chart syncing for this bulk
+  // per-lap reset; it's unneeded anyway since every channel here shares the same lap bounds.
+  syncingZoom = true;
   await Promise.all([
     ...CHANNELS.map(async (entry) => {
       const chart = ensureChart(entry);
@@ -494,6 +512,7 @@ async function loadLap(lapValue, file) {
     loadMap(file, startTs, endTs),
     loadGrip(file, startTs, endTs),
   ]);
+  syncingZoom = false;
   setStatus("");
 }
 
