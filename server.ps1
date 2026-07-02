@@ -144,11 +144,17 @@ SELECT 'TireCompoundRear' AS key, json_extract_string(value, '$.VM_REAR_TIRE_COM
         $endTs = if ($i -lt $lapRows.Count - 1) { [double]$lapRows[$i + 1].ts } else { $sessionEnd }
         $key = [math]::Round($endTs, 4)
         $valid = $lapTimeMap.ContainsKey($key) -and $lapTimeMap[$key] -gt 0
+        # "duration" (endTs - startTs) is derived from the "Lap" event-boundary timestamps
+        # and can differ from the game's own recorded "Lap Time" value by a few ms due to
+        # floating-point rounding in each source - "officialTime" is the exact value the
+        # game recorded (same source as the session picker's fastestLap), used for display
+        # so the two don't show slightly different numbers for the same lap.
         $laps += [PSCustomObject]@{
             lap     = $lapRows[$i].value
             startTs = $startTs
             endTs   = $endTs
             duration = [math]::Round($endTs - $startTs, 3)
+            officialTime = if ($valid) { $lapTimeMap[$key] } else { $null }
             valid   = $valid
         }
     }
@@ -234,17 +240,11 @@ try {
             if ($path -eq "/" -or $path -eq "/index.html") {
                 Write-FileResponse $context (Join-Path $webDir "index.html")
             }
-            elseif ($path -eq "/app.js") {
-                Write-FileResponse $context (Join-Path $webDir "app.js")
-            }
-            elseif ($path -eq "/chart.umd.min.js") {
-                Write-FileResponse $context (Join-Path $webDir "chart.umd.min.js")
-            }
-            elseif ($path -eq "/chartjs-plugin-zoom.min.js") {
-                Write-FileResponse $context (Join-Path $webDir "chartjs-plugin-zoom.min.js")
-            }
-            elseif ($path -eq "/style.css") {
-                Write-FileResponse $context (Join-Path $webDir "style.css")
+            # Static assets: root-level .js/.css files, or .js files one level down under
+            # js/ (the app.js ES module split). The character class excludes "/" and "..",
+            # so this can't escape webDir - no need to itemize every module file by name.
+            elseif ($path -match '^/(js/[\w.-]+\.js|[\w.-]+\.(js|css))$') {
+                Write-FileResponse $context (Join-Path $webDir $path.TrimStart('/'))
             }
             elseif ($path -eq "/api/files") {
                 $files = Get-ChildItem -Path $TelemetryDir -Filter "*.duckdb" -File
@@ -293,9 +293,10 @@ try {
                 # {"value": [...], "Count": n} instead of a plain JSON array.
                 $ic = [System.Globalization.CultureInfo]::InvariantCulture
                 $lapParts = foreach ($lap in $info.laps) {
-                    "{{`"lap`":{0},`"startTs`":{1},`"endTs`":{2},`"duration`":{3},`"valid`":{4}}}" -f `
+                    $officialTimeJson = if ($null -ne $lap.officialTime) { $lap.officialTime.ToString($ic) } else { "null" }
+                    "{{`"lap`":{0},`"startTs`":{1},`"endTs`":{2},`"duration`":{3},`"officialTime`":{4},`"valid`":{5}}}" -f `
                         $lap.lap, $lap.startTs.ToString($ic), $lap.endTs.ToString($ic), $lap.duration.ToString($ic), `
-                        $lap.valid.ToString().ToLowerInvariant()
+                        $officialTimeJson, $lap.valid.ToString().ToLowerInvariant()
                 }
                 $lapsJson = "[" + ($lapParts -join ",") + "]"
                 $body = "{{`"metadata`":{0},`"t0`":{1},`"sessionEnd`":{2},`"laps`":{3}}}" -f `
