@@ -594,15 +594,30 @@ async function loadLap(lapValue, file) {
     `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Lap Dist")}&start=${startTs}&end=${endTs}`
   );
   if (myGeneration !== loadGeneration) return; // a newer loadLap() call has already superseded this one
-  const distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
-  // The channel query's rowid range (floor/ceil) can pull in one extra sample just past
-  // the lap boundary. For continuous channels that's harmless, but Lap Dist resets to 0
-  // each lap, so a stray pre/post-reset sample at either edge would otherwise draw a
-  // full-width zigzag. Trim any such leading/interior-inverted edge samples (does not
-  // touch genuine mid-window resets, which only matter - and are expected - in "full
-  // session" distance mode).
-  while (distPts.length > 1 && distPts[0].d > distPts[1].d) distPts.shift();
-  while (distPts.length > 1 && distPts[distPts.length - 1].d < distPts[distPts.length - 2].d) distPts.pop();
+  let distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
+  if (lapValue === "full" || !lapValue) {
+    // Full-session view: many genuine Lap Dist resets are expected throughout the window
+    // (one per lap boundary) and must be preserved - only trim a stray sample the query's
+    // rowid range (floor/ceil) can pull in just past the two edges.
+    while (distPts.length > 1 && distPts[0].d > distPts[1].d) distPts.shift();
+    while (distPts.length > 1 && distPts[distPts.length - 1].d < distPts[distPts.length - 2].d) distPts.pop();
+  } else {
+    // Single-lap view: Lap Dist should be purely non-decreasing across one lap, so any reset
+    // inside the window is bleed from the adjacent lap. Usually that's one stray sample, but
+    // the "Lap" event timestamp used as the query boundary doesn't always land exactly on Lap
+    // Dist's own reset tick - on some laps that gap is several samples wide (observed: ~7
+    // samples/0.7s on one lap where the in-game lap-change event lagged the distance reset),
+    // so keep the longest non-decreasing run instead of assuming a single stray edge sample.
+    let bestStart = 0, bestLen = 0, runStart = 0;
+    for (let i = 1; i <= distPts.length; i++) {
+      if (i === distPts.length || distPts[i].d < distPts[i - 1].d) {
+        const len = i - runStart;
+        if (len > bestLen) { bestLen = len; bestStart = runStart; }
+        runStart = i;
+      }
+    }
+    distPts = distPts.slice(bestStart, bestStart + bestLen);
+  }
   currentDistPoints = distPts;
   currentWindowDuration = endTs - startTs;
   currentWindowDistance = currentDistPoints.length ? currentDistPoints[currentDistPoints.length - 1].d : 0;
