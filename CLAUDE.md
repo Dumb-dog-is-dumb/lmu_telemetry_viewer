@@ -46,7 +46,9 @@ available, there's no strong reason to rewrite something that already works.
   (itself a 100Hz regular channel whose value already equals `t0 + rowid/100`). This anchors
   rowid→timestamp conversion for every regular channel. See `Get-SessionInfo` in server.ps1.
 - Lap boundaries: `"Lap"` table (`ts`, `value`=lap number). Lap window = `[thisLap.ts,
-  nextLap.ts)`; last lap's end = `max("GPS Time")`.
+  nextLap.ts)`; last lap's end = `max("GPS Time")`. A file's `"Lap"` table can start at a
+  nonzero lap number with a nonzero `t0` — the recording began mid-session, not the car
+  mid-lap-count. Earlier laps live in a different `.duckdb` file, not missing data.
 - `"Lap Time"` (`ts`, `value`) records a completed lap's duration at the `ts` where the
   *next* lap starts — e.g. `{ts: 299.82, value: 113.02}` means the lap that started at
   ts=186.82 took 113.02s. The out-lap (lap 0) always shows `value: 0.0`, and the final
@@ -139,14 +141,6 @@ available, there's no strong reason to rewrite something that already works.
   preview tool (`preview_start`/`preview_stop`) — prefer that over manually backgrounding
   `server.ps1` via Bash when a coding agent needs to drive/screenshot the app.
 
-## Future ideas (not commitments — data exists, UI doesn't)
+## Future ideas
 
-- Tyre channels exist (`TyresPressure`, `TyresCarcassTemp`, `TyresRimTemp`,
-  `TyresRubberTemp`, `TyresTempCentre/Left/Right`, `Tyres Wear`) but their per-wheel schema
-  hasn't been inspected — `DESCRIBE` them before building any UI.
-- Brake temps (`Brakes Temp`, `Brakes Air Temp`) and `Brake Bias Rear` are available, unused.
-- Lap-over-lap comparison/overlay — API already returns per-lap start/end ts, mostly
-  frontend work.
-- Sector times (`Current/Last/Best Sector1/2` tables exist) — not surfaced in UI yet.
-- Distance-based x-axis alternative to time (`"Lap Dist"` channel, 10Hz) — useful for
-  comparing corners across laps of different pace.
+See [FUTURE_IDEAS.md](FUTURE_IDEAS.md).
