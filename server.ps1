@@ -234,17 +234,11 @@ try {
             if ($path -eq "/" -or $path -eq "/index.html") {
                 Write-FileResponse $context (Join-Path $webDir "index.html")
             }
-            elseif ($path -eq "/app.js") {
-                Write-FileResponse $context (Join-Path $webDir "app.js")
-            }
-            elseif ($path -eq "/chart.umd.min.js") {
-                Write-FileResponse $context (Join-Path $webDir "chart.umd.min.js")
-            }
-            elseif ($path -eq "/chartjs-plugin-zoom.min.js") {
-                Write-FileResponse $context (Join-Path $webDir "chartjs-plugin-zoom.min.js")
-            }
-            elseif ($path -eq "/style.css") {
-                Write-FileResponse $context (Join-Path $webDir "style.css")
+            # Static assets: root-level .js/.css files, or .js files one level down under
+            # js/ (the app.js ES module split). The character class excludes "/" and "..",
+            # so this can't escape webDir - no need to itemize every module file by name.
+            elseif ($path -match '^/(js/[\w.-]+\.js|[\w.-]+\.(js|css))$') {
+                Write-FileResponse $context (Join-Path $webDir $path.TrimStart('/'))
             }
             elseif ($path -eq "/api/files") {
                 $files = Get-ChildItem -Path $TelemetryDir -Filter "*.duckdb" -File
