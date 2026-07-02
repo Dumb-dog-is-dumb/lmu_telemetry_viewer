@@ -16,7 +16,19 @@ if (-not (Test-Path $TelemetryDir)) { throw "Telemetry folder not found: $Teleme
 # needs a computed time axis) or "irregular" (has its own ts column, e.g. discrete events).
 $RegularChannels = @("Ground Speed", "Throttle Pos", "Brake Pos", "Steering Pos", "GPS Latitude", "GPS Longitude", "G Force Lat", "G Force Long", "Lap Dist")
 $IrregularChannels = @("Gear")
-$AllowedChannels = $RegularChannels + $IrregularChannels
+# Regular channels with one column per wheel instead of a single "value" column. Order
+# verified by correlating against Steering Pos/G Force Lat (same rowid/100Hz for the
+# steering check): value1/value3 move together and opposite to value2/value4, matching the
+# standard FL/FR/RL/RR wheel-array convention this engine (rFactor2-derived) uses elsewhere.
+$MultiValueChannels = @{
+    "Susp Pos" = @(
+        @{ col = "value1"; key = "fl" },
+        @{ col = "value2"; key = "fr" },
+        @{ col = "value3"; key = "rl" },
+        @{ col = "value4"; key = "rr" }
+    )
+}
+$AllowedChannels = $RegularChannels + $IrregularChannels + @($MultiValueChannels.Keys)
 
 # Small in-memory cache so repeated requests against the same file don't re-run
 # metadata/frequency lookups every time.
@@ -289,6 +301,16 @@ try {
                            "UNION ALL " +
                            "(SELECT ts AS t, value AS v FROM `"$channel`" WHERE ts < $startTs ORDER BY ts DESC LIMIT 1)" +
                            ") ORDER BY t;"
+                }
+                elseif ($MultiValueChannels.ContainsKey($channel)) {
+                    $freq = [double]$info.frequencies[$channel].frequency
+                    $t0 = [double]$info.t0
+                    $rowStart = [math]::Floor(($startTs - $t0) * $freq)
+                    $rowEnd = [math]::Ceiling(($endTs - $t0) * $freq)
+                    if ($rowStart -lt 0) { $rowStart = 0 }
+                    $cols = ($MultiValueChannels[$channel] | ForEach-Object { "$($_.col) AS $($_.key)" }) -join ", "
+                    $sql = "SELECT (rowid / $freq + $t0) AS t, $cols FROM `"$channel`" " +
+                           "WHERE rowid BETWEEN $rowStart AND $rowEnd ORDER BY rowid;"
                 }
                 else {
                     $freq = [double]$info.frequencies[$channel].frequency

@@ -58,9 +58,36 @@
       <h2>Track Map</h2>
       <div class="chart-fill"><canvas id="chartMap"></canvas></div>
     </div>
-    <div class="chart-box grip-box">
-      <h2>Grip Circle <span class="unit">lateral G vs longitudinal G, at hovered time</span></h2>
-      <div class="chart-fill"><canvas id="chartGrip"></canvas></div>
+    <div class="side-row">
+      <div class="chart-box grip-box">
+        <h2>Grip Circle <span class="unit">lateral G vs longitudinal G, at hovered time</span></h2>
+        <div class="chart-fill"><canvas id="chartGrip"></canvas></div>
+      </div>
+      <div class="chart-box susp-box">
+        <h2>Suspension Travel <span class="unit">mm, at hovered time</span></h2>
+        <div class="susp-grid">
+          <div class="susp-wheel" data-wheel="fl">
+            <span class="susp-value">-</span>
+            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-label">FL</span>
+          </div>
+          <div class="susp-wheel" data-wheel="fr">
+            <span class="susp-value">-</span>
+            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-label">FR</span>
+          </div>
+          <div class="susp-wheel" data-wheel="rl">
+            <span class="susp-value">-</span>
+            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-label">RL</span>
+          </div>
+          <div class="susp-wheel" data-wheel="rr">
+            <span class="susp-value">-</span>
+            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-label">RR</span>
+          </div>
+        </div>
+      </div>
     </div>
   </aside>
 </div>

@@ -16,6 +16,15 @@ let currentWindowDuration = 0; // seconds, end-start of the loaded window
 let currentWindowDistance = 0; // meters, Lap Dist value at the end of the loaded window
 let lastChannelRows = {}; // key: channel key -> [{t, v}] with t relative to window start
 
+// Bumped at the start of every loadLap() call. Async work from a superseded call checks its
+// captured value against this before writing shared state (currentDistPoints, lastChannelRows,
+// currentMapPoints/currentGripPoints/currentSuspPoints) - without this, a slow-to-resolve
+// fetch from an old lap can land after a newer lap's fetches already updated the distance
+// mapping, so old (long) time values get clamped by distAtTime() against the new (short)
+// lap's range and pile up at one edge. Only reproduces in distance mode since time mode
+// never calls distAtTime().
+let loadGeneration = 0;
+
 function distAtTime(tSec) {
   const pts = currentDistPoints;
   if (pts.length === 0) return 0;
@@ -137,6 +146,7 @@ function baseChartOptions(yTitle) {
       if (xVal == null || !isFinite(xVal)) return;
       highlightMapAtX(xVal);
       highlightGripAtX(xVal);
+      highlightSuspAtX(xVal);
     },
   };
 }
@@ -164,6 +174,7 @@ function ensureChart(entry) {
   ctx.canvas.addEventListener("mouseleave", () => {
     setMapCursor(null);
     setGripCursor(null);
+    setSuspCursor(null);
   });
   charts[entry.key] = chart;
   return chart;
@@ -245,11 +256,12 @@ function ensureMapChart() {
   return mapChart;
 }
 
-async function loadMap(file, startTs, endTs) {
+async function loadMap(file, startTs, endTs, generation) {
   const [lonRows, latRows] = await Promise.all([
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("GPS Longitude")}&start=${startTs}&end=${endTs}`),
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("GPS Latitude")}&start=${startTs}&end=${endTs}`),
   ]);
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
 
   const n = Math.min(lonRows.length, latRows.length);
   if (n === 0) return;
@@ -343,18 +355,17 @@ function ensureGripChart() {
           label: "Half grip",
           data: [],
           showLine: true,
-          borderColor: "#2c313a",
+          borderColor: "#5b6472",
           borderDash: [4, 4],
-          borderWidth: 1,
+          borderWidth: 1.5,
           pointRadius: 0,
         },
         {
           label: "Max grip",
           data: [],
           showLine: true,
-          borderColor: "#2c313a",
-          borderDash: [4, 4],
-          borderWidth: 1,
+          borderColor: "#5b6472",
+          borderWidth: 1.5,
           pointRadius: 0,
         },
         {
@@ -377,13 +388,13 @@ function ensureGripChart() {
         x: {
           type: "linear",
           title: { display: true, text: "Lateral G" },
-          grid: { color: "#2c313a" },
+          grid: { color: "#363c46" },
           ticks: { color: "#9aa2ad" },
         },
         y: {
           type: "linear",
           title: { display: true, text: "Longitudinal G (accel + / brake −)" },
-          grid: { color: "#2c313a" },
+          grid: { color: "#363c46" },
           ticks: { color: "#9aa2ad" },
         },
       },
@@ -392,11 +403,12 @@ function ensureGripChart() {
   return gripChart;
 }
 
-async function loadGrip(file, startTs, endTs) {
+async function loadGrip(file, startTs, endTs, generation) {
   const [latRows, longRows] = await Promise.all([
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Lat")}&start=${startTs}&end=${endTs}`),
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Long")}&start=${startTs}&end=${endTs}`),
   ]);
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
 
   const n = Math.min(latRows.length, longRows.length);
   if (n === 0) return;
@@ -431,6 +443,62 @@ async function loadGrip(file, startTs, endTs) {
   chart.options.scales.y.min = -halfH;
   chart.options.scales.y.max = halfH;
   chart.update();
+}
+
+const SUSP_WHEELS = ["fl", "fr", "rl", "rr"];
+let currentSuspPoints = []; // [{t, d, fl, fr, rl, rr}] sorted by t, values in mm
+let suspRange = { min: 0, max: 1 }; // shared scale across all 4 wheels for this lap
+const suspEls = {};
+for (const w of SUSP_WHEELS) {
+  const el = document.querySelector(`.susp-wheel[data-wheel="${w}"]`);
+  suspEls[w] = { value: el.querySelector(".susp-value"), fill: el.querySelector(".susp-bar-fill") };
+}
+
+function setSuspCursor(point) {
+  for (const w of SUSP_WHEELS) {
+    const { value, fill } = suspEls[w];
+    if (!point) {
+      value.textContent = "-";
+      fill.style.height = "0%";
+      continue;
+    }
+    const v = point[w];
+    value.textContent = v.toFixed(1);
+    const span = suspRange.max - suspRange.min || 1;
+    const pct = Math.min(100, Math.max(0, ((v - suspRange.min) / span) * 100));
+    fill.style.height = `${pct}%`;
+  }
+}
+
+function highlightSuspAtX(xVal) {
+  if (currentSuspPoints.length === 0) return;
+  setSuspCursor(nearestByKey(currentSuspPoints, xAxisMode === "distance" ? "d" : "t", xVal));
+}
+
+async function loadSusp(file, startTs, endTs, generation) {
+  const rows = await fetchJSON(
+    `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Susp Pos")}&start=${startTs}&end=${endTs}`
+  );
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
+  if (rows.length === 0) return;
+
+  let min = Infinity;
+  let max = -Infinity;
+  const points = rows.map((r) => {
+    const t = r.t - startTs;
+    const point = { t, d: distAtTime(t) };
+    for (const w of SUSP_WHEELS) {
+      const mm = r[w] * 1000; // meters -> mm
+      point[w] = mm;
+      if (mm < min) min = mm;
+      if (mm > max) max = mm;
+    }
+    return point;
+  });
+  currentSuspPoints = points;
+  const pad = (max - min) * 0.1 || 1;
+  suspRange = { min: min - pad, max: max + pad };
+  setSuspCursor(points[0]); // shows lap-start values until hover moves it
 }
 
 async function loadFiles() {
@@ -505,6 +573,7 @@ async function loadSession(file) {
 async function loadLap(lapValue, file) {
   if (!currentSession) return;
   file = file || sessionSelect.value;
+  const myGeneration = ++loadGeneration;
 
   let startTs, endTs;
   if (lapValue === "full" || !lapValue) {
@@ -524,15 +593,31 @@ async function loadLap(lapValue, file) {
   const distRows = await fetchJSON(
     `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Lap Dist")}&start=${startTs}&end=${endTs}`
   );
-  const distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
-  // The channel query's rowid range (floor/ceil) can pull in one extra sample just past
-  // the lap boundary. For continuous channels that's harmless, but Lap Dist resets to 0
-  // each lap, so a stray pre/post-reset sample at either edge would otherwise draw a
-  // full-width zigzag. Trim any such leading/interior-inverted edge samples (does not
-  // touch genuine mid-window resets, which only matter - and are expected - in "full
-  // session" distance mode).
-  while (distPts.length > 1 && distPts[0].d > distPts[1].d) distPts.shift();
-  while (distPts.length > 1 && distPts[distPts.length - 1].d < distPts[distPts.length - 2].d) distPts.pop();
+  if (myGeneration !== loadGeneration) return; // a newer loadLap() call has already superseded this one
+  let distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
+  if (lapValue === "full" || !lapValue) {
+    // Full-session view: many genuine Lap Dist resets are expected throughout the window
+    // (one per lap boundary) and must be preserved - only trim a stray sample the query's
+    // rowid range (floor/ceil) can pull in just past the two edges.
+    while (distPts.length > 1 && distPts[0].d > distPts[1].d) distPts.shift();
+    while (distPts.length > 1 && distPts[distPts.length - 1].d < distPts[distPts.length - 2].d) distPts.pop();
+  } else {
+    // Single-lap view: Lap Dist should be purely non-decreasing across one lap, so any reset
+    // inside the window is bleed from the adjacent lap. Usually that's one stray sample, but
+    // the "Lap" event timestamp used as the query boundary doesn't always land exactly on Lap
+    // Dist's own reset tick - on some laps that gap is several samples wide (observed: ~7
+    // samples/0.7s on one lap where the in-game lap-change event lagged the distance reset),
+    // so keep the longest non-decreasing run instead of assuming a single stray edge sample.
+    let bestStart = 0, bestLen = 0, runStart = 0;
+    for (let i = 1; i <= distPts.length; i++) {
+      if (i === distPts.length || distPts[i].d < distPts[i - 1].d) {
+        const len = i - runStart;
+        if (len > bestLen) { bestLen = len; bestStart = runStart; }
+        runStart = i;
+      }
+    }
+    distPts = distPts.slice(bestStart, bestStart + bestLen);
+  }
   currentDistPoints = distPts;
   currentWindowDuration = endTs - startTs;
   currentWindowDistance = currentDistPoints.length ? currentDistPoints[currentDistPoints.length - 1].d : 0;
@@ -551,14 +636,20 @@ async function loadLap(lapValue, file) {
       const rows = await fetchJSON(
         `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent(entry.key)}&start=${startTs}&end=${endTs}`
       );
+      if (myGeneration !== loadGeneration) return; // superseded by a newer loadLap() call
       lastChannelRows[entry.key] = rows.map((r) => ({ t: r.t - startTs, v: r.v }));
       renderChannel(entry);
     }),
-    loadMap(file, startTs, endTs),
-    loadGrip(file, startTs, endTs),
+    loadMap(file, startTs, endTs, myGeneration),
+    loadGrip(file, startTs, endTs, myGeneration),
+    loadSusp(file, startTs, endTs, myGeneration),
   ]);
-  syncingZoom = false;
-  setStatus("");
+  // A superseded call must not clear syncingZoom out from under the newer load that's still
+  // in flight, nor clobber the status text the newer load is about to set.
+  if (myGeneration === loadGeneration) {
+    syncingZoom = false;
+    setStatus("");
+  }
 }
 
 function renderChannel(entry) {
