@@ -241,7 +241,7 @@ main {
 
 .chart-box canvas {
   width: 100% !important;
-  height: 140px !important;
+  height: 119px !important;
 }
 
 /* Must come after ".chart-box canvas" above: equal specificity, so source order decides

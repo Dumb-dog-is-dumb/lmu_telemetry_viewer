@@ -74,12 +74,15 @@ async function loadSession(file) {
   for (const lap of info.laps) {
     const opt = document.createElement("option");
     opt.value = String(lap.lap);
-    // "duration" is just wall-clock time between lap markers. Laps the game didn't count
+    // "duration" is just wall-clock time between lap markers, which can differ from the
+    // game's own recorded lap time by a few ms of floating-point rounding. Prefer
+    // "officialTime" (same source as the session picker's fastest-lap figure) so the two
+    // don't show mismatched numbers for the same lap. Laps the game didn't count
     // (track-limit cuts, or the last lap if recording stopped mid-lap) never get an entry
-    // in the "Lap Time" channel, so their time never became official - flag that here
-    // instead of showing a number that looks like a real lap time but isn't one.
+    // in the "Lap Time" channel (officialTime is null) - flag that here instead of showing
+    // a number that looks like a real lap time but isn't one.
     opt.textContent = lap.valid
-      ? `Lap ${lap.lap} (${formatLapTime(lap.duration)})`
+      ? `Lap ${lap.lap} (${formatLapTime(lap.officialTime)})`
       : `Lap ${lap.lap} (${formatLapTime(lap.duration)}, not counted)`;
     lapSelect.appendChild(opt);
   }
