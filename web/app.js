@@ -1,11 +1,60 @@
 const sessionSelect = document.getElementById("sessionSelect");
 const lapSelect = document.getElementById("lapSelect");
+const xAxisSelect = document.getElementById("xAxisSelect");
 const statusEl = document.getElementById("status");
 const metaEl = document.getElementById("meta");
 
 let currentSession = null; // response from /api/session
 let charts = {};
 let syncingZoom = false;
+let xAxisMode = "time"; // "time" | "distance"
+
+// Time->distance mapping for the currently loaded window, from the "Lap Dist" channel
+// (10Hz, meters, resets to 0 at each lap start). [{t, d}] sorted by t ascending.
+let currentDistPoints = [];
+let currentWindowDuration = 0; // seconds, end-start of the loaded window
+let currentWindowDistance = 0; // meters, Lap Dist value at the end of the loaded window
+let lastChannelRows = {}; // key: channel key -> [{t, v}] with t relative to window start
+
+function distAtTime(tSec) {
+  const pts = currentDistPoints;
+  if (pts.length === 0) return 0;
+  let lo = 0;
+  let hi = pts.length - 1;
+  if (tSec <= pts[lo].t) return pts[lo].d;
+  if (tSec >= pts[hi].t) return pts[hi].d;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].t < tSec) lo = mid;
+    else hi = mid;
+  }
+  const t0 = pts[lo].t, t1 = pts[hi].t;
+  const d0 = pts[lo].d, d1 = pts[hi].d;
+  if (t1 === t0) return d0;
+  return d0 + ((tSec - t0) / (t1 - t0)) * (d1 - d0);
+}
+
+function xValueFor(tRel) {
+  return xAxisMode === "distance" ? distAtTime(tRel) : tRel;
+}
+
+// Binary search for the point nearest `value` under the given key ("t" or "d"), assuming
+// `points` is sorted ascending by that key (true for a single lap; may degrade near lap
+// resets in "distance" mode when viewing the full session, since Lap Dist isn't globally
+// monotonic there).
+function nearestByKey(points, key, value) {
+  if (points.length === 0) return null;
+  let lo = 0;
+  let hi = points.length - 1;
+  if (value <= points[lo][key]) return points[lo];
+  if (value >= points[hi][key]) return points[hi];
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid][key] < value) lo = mid;
+    else hi = mid;
+  }
+  return value - points[lo][key] < points[hi][key] - value ? points[lo] : points[hi];
+}
 
 Chart.register(ChartZoom);
 
@@ -84,10 +133,10 @@ function baseChartOptions(yTitle) {
     interaction: { intersect: false, mode: "index" },
     onHover: (event, _elements, chart) => {
       if (event.x == null || !chart.scales.x) return;
-      const tSec = chart.scales.x.getValueForPixel(event.x);
-      if (tSec == null || !isFinite(tSec)) return;
-      highlightMapAtTime(tSec);
-      highlightGripAtTime(tSec);
+      const xVal = chart.scales.x.getValueForPixel(event.x);
+      if (xVal == null || !isFinite(xVal)) return;
+      highlightMapAtX(xVal);
+      highlightGripAtX(xVal);
     },
   };
 }
@@ -141,20 +190,9 @@ function setMapCursor(point) {
   mapChart.update("none");
 }
 
-function highlightMapAtTime(tSec) {
+function highlightMapAtX(xVal) {
   if (currentMapPoints.length === 0) return;
-  let lo = 0;
-  let hi = currentMapPoints.length - 1;
-  if (tSec <= currentMapPoints[lo].t) return setMapCursor(currentMapPoints[lo]);
-  if (tSec >= currentMapPoints[hi].t) return setMapCursor(currentMapPoints[hi]);
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (currentMapPoints[mid].t < tSec) lo = mid;
-    else hi = mid;
-  }
-  const nearest =
-    tSec - currentMapPoints[lo].t < currentMapPoints[hi].t - tSec ? currentMapPoints[lo] : currentMapPoints[hi];
-  setMapCursor(nearest);
+  setMapCursor(nearestByKey(currentMapPoints, xAxisMode === "distance" ? "d" : "t", xVal));
 }
 
 function ensureMapChart() {
@@ -225,10 +263,12 @@ async function loadMap(file, startTs, endTs) {
   const lat0 = latRows[0].v;
   const points = [];
   for (let i = 0; i < n; i++) {
+    const t = lonRows[i].t - startTs;
     points.push({
       x: (lonRows[i].v - lon0) * metersPerDegLon,
       y: (latRows[i].v - lat0) * METERS_PER_DEG_LAT,
-      t: lonRows[i].t - startTs,
+      t,
+      d: distAtTime(t),
     });
   }
   currentMapPoints = points;
@@ -287,20 +327,9 @@ function setGripCursor(point) {
   gripChart.update("none");
 }
 
-function highlightGripAtTime(tSec) {
+function highlightGripAtX(xVal) {
   if (currentGripPoints.length === 0) return;
-  let lo = 0;
-  let hi = currentGripPoints.length - 1;
-  if (tSec <= currentGripPoints[lo].t) return setGripCursor(currentGripPoints[lo]);
-  if (tSec >= currentGripPoints[hi].t) return setGripCursor(currentGripPoints[hi]);
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (currentGripPoints[mid].t < tSec) lo = mid;
-    else hi = mid;
-  }
-  const nearest =
-    tSec - currentGripPoints[lo].t < currentGripPoints[hi].t - tSec ? currentGripPoints[lo] : currentGripPoints[hi];
-  setGripCursor(nearest);
+  setGripCursor(nearestByKey(currentGripPoints, xAxisMode === "distance" ? "d" : "t", xVal));
 }
 
 function ensureGripChart() {
@@ -377,7 +406,8 @@ async function loadGrip(file, startTs, endTs) {
   for (let i = 0; i < n; i++) {
     const x = latRows[i].v;
     const y = longRows[i].v;
-    points.push({ x, y, t: latRows[i].t - startTs });
+    const t = latRows[i].t - startTs;
+    points.push({ x, y, t, d: distAtTime(t) });
     maxMag = Math.max(maxMag, Math.sqrt(x * x + y * y));
   }
   currentGripPoints = points;
@@ -488,6 +518,25 @@ async function loadLap(lapValue, file) {
   }
 
   setStatus("Loading telemetry...");
+
+  // Fetch the time->distance mapping first (map/grip cursor sync and the distance x-axis
+  // mode both need it) so it's ready before the channels below use it.
+  const distRows = await fetchJSON(
+    `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Lap Dist")}&start=${startTs}&end=${endTs}`
+  );
+  const distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
+  // The channel query's rowid range (floor/ceil) can pull in one extra sample just past
+  // the lap boundary. For continuous channels that's harmless, but Lap Dist resets to 0
+  // each lap, so a stray pre/post-reset sample at either edge would otherwise draw a
+  // full-width zigzag. Trim any such leading/interior-inverted edge samples (does not
+  // touch genuine mid-window resets, which only matter - and are expected - in "full
+  // session" distance mode).
+  while (distPts.length > 1 && distPts[0].d > distPts[1].d) distPts.shift();
+  while (distPts.length > 1 && distPts[distPts.length - 1].d < distPts[distPts.length - 2].d) distPts.pop();
+  currentDistPoints = distPts;
+  currentWindowDuration = endTs - startTs;
+  currentWindowDistance = currentDistPoints.length ? currentDistPoints[currentDistPoints.length - 1].d : 0;
+
   // Each channel resets its own zoom independently below, and resetZoom() fires the same
   // onZoomComplete callback a real user zoom does, which triggers syncZoomAcrossCharts.
   // Without this guard, chart A's reset can sync-force chart B's axis before chart B has
@@ -498,16 +547,12 @@ async function loadLap(lapValue, file) {
   syncingZoom = true;
   await Promise.all([
     ...CHANNELS.map(async (entry) => {
-      const chart = ensureChart(entry);
+      ensureChart(entry);
       const rows = await fetchJSON(
         `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent(entry.key)}&start=${startTs}&end=${endTs}`
       );
-      const points = rows.map((r) => ({ x: r.t - startTs, y: r.v }));
-      chart.data.datasets[0].data = points;
-      chart.options.scales.x.min = 0;
-      chart.options.scales.x.max = endTs - startTs;
-      chart.update();
-      chart.resetZoom("none"); // clears any zoom left over from the previous lap
+      lastChannelRows[entry.key] = rows.map((r) => ({ t: r.t - startTs, v: r.v }));
+      renderChannel(entry);
     }),
     loadMap(file, startTs, endTs),
     loadGrip(file, startTs, endTs),
@@ -516,8 +561,27 @@ async function loadLap(lapValue, file) {
   setStatus("");
 }
 
+function renderChannel(entry) {
+  const chart = charts[entry.key];
+  const rows = lastChannelRows[entry.key];
+  if (!chart || !rows) return;
+  chart.data.datasets[0].data = rows.map((r) => ({ x: xValueFor(r.t), y: r.v }));
+  chart.options.scales.x.min = 0;
+  chart.options.scales.x.max = xAxisMode === "distance" ? currentWindowDistance : currentWindowDuration;
+  chart.options.scales.x.title.text =
+    xAxisMode === "distance" ? "Distance (m, from lap start)" : "Time (s, from lap start)";
+  chart.update();
+  chart.resetZoom("none"); // clears any zoom left over from the previous render
+}
+
 sessionSelect.addEventListener("change", () => loadSession(sessionSelect.value));
 lapSelect.addEventListener("change", () => loadLap(lapSelect.value));
+xAxisSelect.addEventListener("change", () => {
+  xAxisMode = xAxisSelect.value;
+  syncingZoom = true;
+  for (const entry of CHANNELS) renderChannel(entry);
+  syncingZoom = false;
+});
 document.getElementById("resetZoomBtn").addEventListener("click", () => {
   for (const key in charts) charts[key].resetZoom();
 });
