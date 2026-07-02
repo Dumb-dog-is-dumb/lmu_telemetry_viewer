@@ -14,7 +14,7 @@ if (-not (Test-Path $TelemetryDir)) { throw "Telemetry folder not found: $Teleme
 
 # Channels we expose to the UI. Each is either "regular" (fixed-frequency, row-indexed,
 # needs a computed time axis) or "irregular" (has its own ts column, e.g. discrete events).
-$RegularChannels = @("Ground Speed", "Throttle Pos", "Brake Pos", "Steering Pos", "GPS Latitude", "GPS Longitude", "G Force Lat", "G Force Long")
+$RegularChannels = @("Ground Speed", "Throttle Pos", "Brake Pos", "Steering Pos", "GPS Latitude", "GPS Longitude", "G Force Lat", "G Force Long", "Lap Dist")
 $IrregularChannels = @("Gear")
 $AllowedChannels = $RegularChannels + $IrregularChannels
 
