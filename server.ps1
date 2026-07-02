@@ -81,7 +81,18 @@ function Get-SessionInfo {
     param([string]$DbPath)
     if ($SessionCache.ContainsKey($DbPath)) { return $SessionCache[$DbPath] }
 
-    $metaJson = Invoke-DuckDb $DbPath "SELECT key, value FROM metadata WHERE key != 'CarSetup';"
+    # CarSetup is a JSON blob of tuning params (excluded from the plain key/value rows
+    # below); VM_FRONT/REAR_TIRE_COMPOUND.stringValue inside it is the only place the
+    # human-readable compound name ("Medium", "Soft", ...) lives - the "TyresCompound"
+    # channel table just logs a numeric index, not a name.
+    $metaSql = @'
+SELECT key, value FROM metadata WHERE key != 'CarSetup'
+UNION ALL
+SELECT 'TireCompoundFront' AS key, json_extract_string(value, '$.VM_FRONT_TIRE_COMPOUND.stringValue') AS value FROM metadata WHERE key = 'CarSetup'
+UNION ALL
+SELECT 'TireCompoundRear' AS key, json_extract_string(value, '$.VM_REAR_TIRE_COMPOUND.stringValue') AS value FROM metadata WHERE key = 'CarSetup'
+'@
+    $metaJson = Invoke-DuckDb $DbPath $metaSql
     $meta = $metaJson | ConvertFrom-Json
 
     $chanJson = Invoke-DuckDb $DbPath "SELECT channelName, frequency, unit FROM channelsList;"
