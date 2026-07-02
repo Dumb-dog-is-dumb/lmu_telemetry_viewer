@@ -6,6 +6,10 @@
   --text: #e6e8eb;
   --muted: #9aa2ad;
   --accent: #4fa8ff;
+  /* Lap B's color where a single distinguishing hue is needed (map/grip lines+cursors,
+     suspension bars/values, meta "B:" row). The 5 time-series charts instead keep each
+     channel's own color for lap B and use a dashed line to distinguish it from lap A. */
+  --accent-b: #ff8a3d;
 }
 
 * { box-sizing: border-box; }
@@ -53,6 +57,29 @@ h1 {
   gap: 4px;
 }
 
+.compare-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+}
+
+#compareBPickers {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* The #compareBPickers ID selector above beats the UA stylesheet's [hidden] rule on
+   specificity alone, so the hidden attribute would otherwise be silently ignored - this
+   explicit override is needed to actually hide it. */
+#compareBPickers[hidden] {
+  display: none;
+}
+
+.browse-btn {
+  padding: 6px 10px;
+}
+
 select {
   background: var(--panel);
   color: var(--text);
@@ -94,12 +121,30 @@ button:hover {
   font-size: 13px;
   color: var(--muted);
   display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .meta b { color: var(--text); }
+
+/* One row per slot. A single un-prefixed row (the default, Compare off) looks identical to
+   the old single-row .meta layout; comparing adds a second row with a "B:" label. */
+.meta-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.meta-row-label {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.meta-row-b .meta-row-label {
+  color: var(--accent-b);
+}
 
 .layout {
   flex: 1;
@@ -188,6 +233,13 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+.susp-value-b {
+  color: var(--accent-b);
+}
+
+/* Two bars side by side (rather than overlaid/transparent) so comparing A vs B heights
+   stays unambiguous. A single bar (Compare off) just fills the whole track, unchanged from
+   before. */
 .susp-bar-track {
   flex: 1 1 0;
   min-height: 0;
@@ -195,15 +247,21 @@ main {
   background: var(--border);
   border-radius: 4px;
   display: flex;
+  flex-direction: row;
   align-items: flex-end;
+  gap: 2px;
   overflow: hidden;
 }
 
 .susp-bar-fill {
-  width: 100%;
+  flex: 1 1 0;
   height: 0%;
   background: var(--accent);
   border-radius: 4px 4px 0 0;
+}
+
+.susp-bar-fill-b {
+  background: var(--accent-b);
 }
 
 .susp-label {
@@ -251,4 +309,87 @@ main {
   inset: 0;
   width: 100% !important;
   height: 100% !important;
+}
+
+/* Session browser modal */
+#sessionTableModal {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  width: min(1000px, 90vw);
+  max-height: 80vh;
+}
+
+#sessionTableModal::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#sessionTableModal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+#sessionTableModal h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* simple-datatables ships an unthemed light-mode stylesheet (plain hex colors, no CSS custom
+   properties) - repoint its classes at this app's existing dark-theme variables instead of
+   shipping a separate themed build. */
+.datatable-wrapper,
+.datatable-top,
+.datatable-bottom,
+.datatable-info,
+.datatable-dropdown label,
+.datatable-search input,
+.datatable-pagination a {
+  color: var(--text);
+}
+
+.datatable-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.datatable-table {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+.datatable-table th,
+.datatable-table td {
+  border-color: var(--border) !important;
+  color: var(--text);
+}
+
+.datatable-table thead th {
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.datatable-table tbody tr {
+  cursor: pointer;
+}
+
+.datatable-table tbody tr:hover {
+  background: var(--bg);
+}
+
+.datatable-wrapper.no-header .datatable-container,
+.datatable-wrapper.no-footer .datatable-container {
+  border-color: var(--border);
+}
+
+.datatable-pagination a.datatable-active a,
+.datatable-pagination li.active a {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
 }

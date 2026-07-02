@@ -1,8 +1,12 @@
 import { fetchJSON, nearestByKey } from "./utils.js";
 import { lapState, distAtTime } from "./lapState.js";
 
+const SLOTS = ["A", "B"];
+const ACCENT_B = getComputedStyle(document.documentElement).getPropertyValue("--accent-b").trim() || "#ff8a3d";
+
 let gripChart = null;
-let currentGripPoints = []; // [{x: lateralG, y: longitudinalG, t}] sorted by t
+let currentGripPoints = { A: [], B: [] }; // slot -> [{x: lateralG, y: longitudinalG, t, d}]
+let maxMag = { A: 0, B: 0 };
 
 function circlePoints(radius, segments = 64) {
   const pts = [];
@@ -13,15 +17,18 @@ function circlePoints(radius, segments = 64) {
   return pts;
 }
 
-export function setGripCursor(point) {
+// Dataset index layout: 0/1 = shared reference circles (half-grip/max-grip, just visual
+// guides, not per-lap data), 2 = cursor A (unchanged), 3 = cursor B (new).
+export function setGripCursor(slot, point) {
   if (!gripChart) return;
-  gripChart.data.datasets[2].data = point ? [{ x: point.x, y: point.y }] : [];
+  const idx = slot === "A" ? 2 : 3;
+  gripChart.data.datasets[idx].data = point ? [{ x: point.x, y: point.y }] : [];
   gripChart.update("none");
 }
 
-export function highlightGripAtX(xVal) {
-  if (currentGripPoints.length === 0) return;
-  setGripCursor(nearestByKey(currentGripPoints, lapState.xAxisMode === "distance" ? "d" : "t", xVal));
+export function highlightGripAtX(slot, xVal) {
+  if (currentGripPoints[slot].length === 0) return;
+  setGripCursor(slot, nearestByKey(currentGripPoints[slot], lapState.xAxisMode === "distance" ? "d" : "t", xVal));
 }
 
 function ensureGripChart() {
@@ -49,9 +56,17 @@ function ensureGripChart() {
           pointRadius: 0,
         },
         {
-          label: "Cursor",
+          label: "Cursor A",
           data: [],
           backgroundColor: "#ffffff",
+          borderColor: "#14161a",
+          borderWidth: 2,
+          pointRadius: 6,
+        },
+        {
+          label: "Cursor B",
+          data: [],
+          backgroundColor: ACCENT_B,
           borderColor: "#14161a",
           borderWidth: 2,
           pointRadius: 6,
@@ -83,32 +98,21 @@ function ensureGripChart() {
   return gripChart;
 }
 
-export async function loadGrip(file, startTs, endTs, generation) {
-  const [latRows, longRows] = await Promise.all([
-    fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Lat")}&start=${startTs}&end=${endTs}`),
-    fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Long")}&start=${startTs}&end=${endTs}`),
-  ]);
-  if (generation !== lapState.loadGeneration) return; // superseded by a newer loadLap() call
-
-  const n = Math.min(latRows.length, longRows.length);
-  if (n === 0) return;
-
-  let maxMag = 0;
-  const points = [];
-  for (let i = 0; i < n; i++) {
-    const x = latRows[i].v;
-    const y = longRows[i].v;
-    const t = latRows[i].t - startTs;
-    points.push({ x, y, t, d: distAtTime(t) });
-    maxMag = Math.max(maxMag, Math.sqrt(x * x + y * y));
-  }
-  currentGripPoints = points;
-
+// Redraws reference circles + lap-start cursor from cached state without re-fetching - used
+// both right after a fetch and when Compare is toggled back on for an already-loaded slot.
+export function renderGrip() {
   const chart = ensureGripChart();
-  const niceMax = Math.max(0.5, Math.ceil(maxMag * 2) / 2);
+  const active = SLOTS.filter((s) => (s === "A" || lapState.compareMode) && currentGripPoints[s].length > 0);
+  if (active.length === 0) return;
+
+  const niceMax = Math.max(0.5, Math.ceil(Math.max(...active.map((s) => maxMag[s])) * 2) / 2);
   chart.data.datasets[0].data = circlePoints(niceMax / 2);
   chart.data.datasets[1].data = circlePoints(niceMax);
-  chart.data.datasets[2].data = [{ x: points[0].x, y: points[0].y }]; // shows lap-start point until hover moves it
+  for (const slot of SLOTS) {
+    const idx = slot === "A" ? 2 : 3;
+    // shows lap-start point until hover moves it
+    chart.data.datasets[idx].data = active.includes(slot) ? [{ x: currentGripPoints[slot][0].x, y: currentGripPoints[slot][0].y }] : [];
+  }
 
   const canvas = document.getElementById("chartGrip");
   const rect = canvas.getBoundingClientRect();
@@ -123,4 +127,28 @@ export async function loadGrip(file, startTs, endTs, generation) {
   chart.options.scales.y.min = -halfH;
   chart.options.scales.y.max = halfH;
   chart.update();
+}
+
+export async function loadGrip(slot, file, startTs, endTs, generation) {
+  const [latRows, longRows] = await Promise.all([
+    fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Lat")}&start=${startTs}&end=${endTs}`),
+    fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Long")}&start=${startTs}&end=${endTs}`),
+  ]);
+  if (generation !== lapState.generation[slot]) return; // superseded by a newer loadLap() call
+
+  const n = Math.min(latRows.length, longRows.length);
+  if (n === 0) return;
+
+  let mag = 0;
+  const points = [];
+  for (let i = 0; i < n; i++) {
+    const x = latRows[i].v;
+    const y = longRows[i].v;
+    const t = latRows[i].t - startTs;
+    points.push({ x, y, t, d: distAtTime(slot, t) });
+    mag = Math.max(mag, Math.sqrt(x * x + y * y));
+  }
+  currentGripPoints[slot] = points;
+  maxMag[slot] = mag;
+  renderGrip();
 }

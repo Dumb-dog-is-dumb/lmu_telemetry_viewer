@@ -4,8 +4,8 @@
     {
       "name": "telemetry-viewer",
       "runtimeExecutable": "powershell",
-      "runtimeArgs": ["-ExecutionPolicy", "Bypass", "-File", "server.ps1", "-NoBrowser"],
-      "port": 8787
+      "runtimeArgs": ["-ExecutionPolicy", "Bypass", "-File", "server.ps1", "-NoBrowser", "-Port", "8788"],
+      "port": 8788
     }
   ]
 }

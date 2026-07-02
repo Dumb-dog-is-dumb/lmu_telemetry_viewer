@@ -1,29 +1,39 @@
 import { fetchJSON, formatLapTime } from "./utils.js";
 import { lapState, nextGeneration } from "./lapState.js";
 import { zoomSyncState } from "./chartsCommon.js";
-import { CHANNELS, loadChannel } from "./channelsPanel.js";
-import { loadMap } from "./mapPanel.js";
-import { loadGrip } from "./gripPanel.js";
-import { loadSusp } from "./suspPanel.js";
+import { CHANNELS, loadChannel, renderAllChannels } from "./channelsPanel.js";
+import { loadMap, renderMap } from "./mapPanel.js";
+import { loadGrip, renderGrip } from "./gripPanel.js";
+import { loadSusp, renderSusp } from "./suspPanel.js";
+import { openSessionTable } from "./sessionTable.js";
 
-const sessionSelect = document.getElementById("sessionSelect");
-const lapSelect = document.getElementById("lapSelect");
+const sel = {
+  A: { session: document.getElementById("sessionSelect"), lap: document.getElementById("lapSelect") },
+  B: { session: document.getElementById("sessionSelectB"), lap: document.getElementById("lapSelectB") },
+};
 const statusEl = document.getElementById("status");
 const metaEl = document.getElementById("meta");
+const compareToggle = document.getElementById("compareToggle");
+const compareBPickers = document.getElementById("compareBPickers");
+const suspBEls = document.querySelectorAll(".susp-value-b, .susp-bar-fill-b");
 
-let currentSession = null; // response from /api/session
+let currentSession = { A: null, B: null }; // response from /api/session, per slot
+// /api/files result, cached module-locally so toggling Compare or opening the session table
+// doesn't re-fetch it.
+let filesCache = null;
 
 export function setStatus(text) {
   statusEl.textContent = text;
 }
 
-export async function loadFiles() {
-  setStatus("Loading session list...");
-  const files = await fetchJSON("/api/files");
-  sessionSelect.innerHTML = "";
+export function getFiles() {
+  return filesCache;
+}
+
+function populateSessionSelect(selectEl, files) {
+  selectEl.innerHTML = "";
   if (files.length === 0) {
-    sessionSelect.innerHTML = "<option>No telemetry files found</option>";
-    setStatus("No .duckdb telemetry files found.");
+    selectEl.innerHTML = "<option>No telemetry files found</option>";
     return;
   }
   for (const f of files) {
@@ -33,18 +43,25 @@ export async function loadFiles() {
     const car = f.car ? ` — ${f.car}` : "";
     const fastLap = f.fastestLap != null ? ` — best lap ${formatLapTime(f.fastestLap)}` : "";
     opt.textContent = `${f.track} — ${f.sessionType || "?"} — ${when}${car}${fastLap}`;
-    sessionSelect.appendChild(opt);
+    selectEl.appendChild(opt);
   }
-  setStatus("");
-  await loadSession(sessionSelect.value);
 }
 
-async function loadSession(file) {
-  if (!file) return;
-  setStatus("Loading session info...");
-  const info = await fetchJSON(`/api/session?file=${encodeURIComponent(file)}`);
-  currentSession = info;
+export async function loadFiles() {
+  setStatus("Loading session list...");
+  const files = await fetchJSON("/api/files");
+  filesCache = files;
+  populateSessionSelect(sel.A.session, files);
+  if (files.length === 0) {
+    setStatus("No .duckdb telemetry files found.");
+    return;
+  }
+  setStatus("");
+  await loadSession("A", sel.A.session.value);
+}
 
+function metaRowHtml(info, label) {
+  if (!info) return "";
   const metaMap = {};
   for (const kv of info.metadata) metaMap[kv.key] = kv.value;
 
@@ -55,57 +72,75 @@ async function loadSession(file) {
     compound = front === rear ? (front ?? rear) : `Front: ${front ?? "?"} / Rear: ${rear ?? "?"}`;
   }
 
-  metaEl.innerHTML = `
-    <span><b>Track:</b> ${metaMap.TrackName ?? "-"}</span>
-    <span><b>Car:</b> ${metaMap.CarName ?? "-"}</span>
-    <span><b>Class:</b> ${metaMap.CarClass ?? "-"}</span>
-    <span><b>Session:</b> ${metaMap.SessionType ?? "-"}</span>
-    <span><b>Driver:</b> ${metaMap.DriverName ?? "-"}</span>
-    <span><b>Weather:</b> ${metaMap.WeatherConditions ?? "-"}</span>
-    <span><b>Tire Compound:</b> ${compound}</span>
-  `;
+  const rowClass = label ? ` meta-row-${label.toLowerCase()}` : "";
+  const labelHtml = label ? `<span class="meta-row-label">${label}:</span>` : "";
+  return `
+    <div class="meta-row${rowClass}">
+      ${labelHtml}
+      <span><b>Track:</b> ${metaMap.TrackName ?? "-"}</span>
+      <span><b>Car:</b> ${metaMap.CarName ?? "-"}</span>
+      <span><b>Class:</b> ${metaMap.CarClass ?? "-"}</span>
+      <span><b>Session:</b> ${metaMap.SessionType ?? "-"}</span>
+      <span><b>Driver:</b> ${metaMap.DriverName ?? "-"}</span>
+      <span><b>Weather:</b> ${metaMap.WeatherConditions ?? "-"}</span>
+      <span><b>Tire Compound:</b> ${compound}</span>
+    </div>`;
+}
 
-  lapSelect.innerHTML = "";
+function renderMeta() {
+  if (!lapState.compareMode) {
+    metaEl.classList.remove("compare");
+    metaEl.innerHTML = metaRowHtml(currentSession.A, null);
+    return;
+  }
+  metaEl.classList.add("compare");
+  metaEl.innerHTML = metaRowHtml(currentSession.A, "A") + metaRowHtml(currentSession.B, "B");
+}
+
+async function loadSession(slot, file) {
+  if (!file) return;
+  setStatus("Loading session info...");
+  const info = await fetchJSON(`/api/session?file=${encodeURIComponent(file)}`);
+  currentSession[slot] = info;
+  renderMeta();
+
+  const lapSel = sel[slot].lap;
+  lapSel.innerHTML = "";
   const fullOpt = document.createElement("option");
   fullOpt.value = "full";
   fullOpt.textContent = "Full session";
-  lapSelect.appendChild(fullOpt);
+  lapSel.appendChild(fullOpt);
 
   for (const lap of info.laps) {
     const opt = document.createElement("option");
     opt.value = String(lap.lap);
-    // "duration" is just wall-clock time between lap markers, which can differ from the
-    // game's own recorded lap time by a few ms of floating-point rounding. Prefer
-    // "officialTime" (same source as the session picker's fastest-lap figure) so the two
-    // don't show mismatched numbers for the same lap. Laps the game didn't count
-    // (track-limit cuts, or the last lap if recording stopped mid-lap) never get an entry
-    // in the "Lap Time" channel (officialTime is null) - flag that here instead of showing
-    // a number that looks like a real lap time but isn't one.
+    // See loadLap()'s startTs/endTs comment for why "officialTime" (not "duration") is
+    // preferred for display.
     opt.textContent = lap.valid
       ? `Lap ${lap.lap} (${formatLapTime(lap.officialTime)})`
       : `Lap ${lap.lap} (${formatLapTime(lap.duration)}, not counted)`;
-    lapSelect.appendChild(opt);
+    lapSel.appendChild(opt);
   }
 
   if (info.laps.length > 0) {
-    lapSelect.value = String(info.laps[info.laps.length - 1].lap);
+    lapSel.value = String(info.laps[info.laps.length - 1].lap);
   }
 
   setStatus("");
-  await loadLap(lapSelect.value, file);
+  await loadLap(slot, lapSel.value, file);
 }
 
-async function loadLap(lapValue, file) {
-  if (!currentSession) return;
-  file = file || sessionSelect.value;
-  const myGeneration = nextGeneration();
+async function loadLap(slot, lapValue, file) {
+  if (!currentSession[slot]) return;
+  file = file || sel[slot].session.value;
+  const myGeneration = nextGeneration(slot);
 
   let startTs, endTs;
   if (lapValue === "full" || !lapValue) {
-    startTs = currentSession.t0;
-    endTs = currentSession.sessionEnd;
+    startTs = currentSession[slot].t0;
+    endTs = currentSession[slot].sessionEnd;
   } else {
-    const lap = currentSession.laps.find((l) => String(l.lap) === String(lapValue));
+    const lap = currentSession[slot].laps.find((l) => String(l.lap) === String(lapValue));
     if (!lap) return;
     startTs = lap.startTs;
     endTs = lap.endTs;
@@ -118,7 +153,7 @@ async function loadLap(lapValue, file) {
   const distRows = await fetchJSON(
     `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Lap Dist")}&start=${startTs}&end=${endTs}`
   );
-  if (myGeneration !== lapState.loadGeneration) return; // a newer loadLap() call has already superseded this one
+  if (myGeneration !== lapState.generation[slot]) return; // a newer loadLap() call has already superseded this one
   let distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
   if (lapValue === "full" || !lapValue) {
     // Full-session view: many genuine Lap Dist resets are expected throughout the window
@@ -143,9 +178,9 @@ async function loadLap(lapValue, file) {
     }
     distPts = distPts.slice(bestStart, bestStart + bestLen);
   }
-  lapState.distPoints = distPts;
-  lapState.windowDuration = endTs - startTs;
-  lapState.windowDistance = lapState.distPoints.length ? lapState.distPoints[lapState.distPoints.length - 1].d : 0;
+  lapState.slots[slot].distPoints = distPts;
+  lapState.slots[slot].windowDuration = endTs - startTs;
+  lapState.slots[slot].windowDistance = distPts.length ? distPts[distPts.length - 1].d : 0;
 
   // Each channel resets its own zoom independently below, and resetZoom() fires the same
   // onZoomComplete callback a real user zoom does, which triggers syncZoomAcrossCharts.
@@ -156,18 +191,63 @@ async function loadLap(lapValue, file) {
   // per-lap reset; it's unneeded anyway since every channel here shares the same lap bounds.
   zoomSyncState.syncing = true;
   await Promise.all([
-    ...CHANNELS.map((entry) => loadChannel(entry, file, startTs, endTs, myGeneration)),
-    loadMap(file, startTs, endTs, myGeneration),
-    loadGrip(file, startTs, endTs, myGeneration),
-    loadSusp(file, startTs, endTs, myGeneration),
+    ...CHANNELS.map((entry) => loadChannel(entry, slot, file, startTs, endTs, myGeneration)),
+    loadMap(slot, file, startTs, endTs, myGeneration),
+    loadGrip(slot, file, startTs, endTs, myGeneration),
+    loadSusp(slot, file, startTs, endTs, myGeneration),
   ]);
   // A superseded call must not clear zoomSyncState.syncing out from under the newer load
   // that's still in flight, nor clobber the status text the newer load is about to set.
-  if (myGeneration === lapState.loadGeneration) {
+  if (myGeneration === lapState.generation[slot]) {
     zoomSyncState.syncing = false;
     setStatus("");
   }
 }
 
-sessionSelect.addEventListener("change", () => loadSession(sessionSelect.value));
-lapSelect.addEventListener("change", () => loadLap(lapSelect.value));
+function setCompareVisible(visible) {
+  compareBPickers.hidden = !visible;
+  for (const el of suspBEls) el.hidden = !visible;
+}
+
+compareToggle.addEventListener("change", async () => {
+  lapState.compareMode = compareToggle.checked;
+  setCompareVisible(lapState.compareMode);
+
+  if (lapState.compareMode && !currentSession.B) {
+    // First time enabling Compare: default slot B to the currently loaded slot-A session -
+    // comparing two laps within the same session is the common case.
+    if (filesCache) populateSessionSelect(sel.B.session, filesCache);
+    sel.B.session.value = sel.A.session.value;
+    await loadSession("B", sel.B.session.value);
+  } else {
+    // Either turning Compare off, or back on with slot B already cached in lapState/
+    // currentSession from an earlier toggle - just re-render from cached state, no re-fetch.
+    renderAllChannels();
+    renderMap();
+    renderGrip();
+    renderSusp();
+    renderMeta();
+  }
+});
+
+for (const btn of document.querySelectorAll(".browse-btn")) {
+  btn.addEventListener("click", () => openSessionTable(btn.dataset.target));
+}
+
+// Used by sessionTable.js when a row is picked, so it drives the same select+change path a
+// manual dropdown pick would.
+export function selectSession(slot, file) {
+  const selectEl = sel[slot].session;
+  if (selectEl.value === file) {
+    // A `<select>` doesn't fire "change" when set to its current value - load explicitly.
+    loadSession(slot, file);
+    return;
+  }
+  selectEl.value = file;
+  selectEl.dispatchEvent(new Event("change"));
+}
+
+sel.A.session.addEventListener("change", () => loadSession("A", sel.A.session.value));
+sel.A.lap.addEventListener("change", () => loadLap("A", sel.A.lap.value));
+sel.B.session.addEventListener("change", () => loadSession("B", sel.B.session.value));
+sel.B.lap.addEventListener("change", () => loadLap("B", sel.B.lap.value));

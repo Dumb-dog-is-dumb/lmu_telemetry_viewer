@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>LMU Telemetry Viewer</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/simple-datatables.css">
 </head>
 <body>
 <header>
@@ -12,9 +13,22 @@
     <label>Session
       <select id="sessionSelect"><option>Loading...</option></select>
     </label>
+    <button type="button" class="browse-btn" data-target="A">Browse...</button>
     <label>Lap
       <select id="lapSelect"><option>-</option></select>
     </label>
+    <label class="compare-toggle">
+      <input type="checkbox" id="compareToggle"> Compare
+    </label>
+    <span id="compareBPickers" hidden>
+      <label>Session B
+        <select id="sessionSelectB"><option>-</option></select>
+      </label>
+      <button type="button" class="browse-btn" data-target="B">Browse...</button>
+      <label>Lap B
+        <select id="lapSelectB"><option>-</option></select>
+      </label>
+    </span>
     <label>X axis
       <select id="xAxisSelect">
         <option value="time">Time</option>
@@ -24,7 +38,7 @@
     <button id="resetZoomBtn" type="button">Reset zoom</button>
     <span id="status"></span>
   </div>
-  <p class="hint">Drag on a chart to zoom into that range, scroll to zoom in/out, hold shift and drag to pan. All charts stay in sync.</p>
+  <p class="hint">Drag on a chart to zoom into that range, scroll to zoom in/out, hold shift and drag to pan. All charts stay in sync. Check "Compare" to overlay a second lap, possibly from a different session.</p>
 </header>
 
 <section id="meta" class="meta"></section>
@@ -67,23 +81,39 @@
         <h2>Suspension Travel <span class="unit">mm, at hovered time</span></h2>
         <div class="susp-grid">
           <div class="susp-wheel" data-wheel="fl">
-            <span class="susp-value">-</span>
-            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-value susp-value-a">-</span>
+            <span class="susp-value susp-value-b" hidden>-</span>
+            <div class="susp-bar-track">
+              <div class="susp-bar-fill susp-bar-fill-a"></div>
+              <div class="susp-bar-fill susp-bar-fill-b" hidden></div>
+            </div>
             <span class="susp-label">FL</span>
           </div>
           <div class="susp-wheel" data-wheel="fr">
-            <span class="susp-value">-</span>
-            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-value susp-value-a">-</span>
+            <span class="susp-value susp-value-b" hidden>-</span>
+            <div class="susp-bar-track">
+              <div class="susp-bar-fill susp-bar-fill-a"></div>
+              <div class="susp-bar-fill susp-bar-fill-b" hidden></div>
+            </div>
             <span class="susp-label">FR</span>
           </div>
           <div class="susp-wheel" data-wheel="rl">
-            <span class="susp-value">-</span>
-            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-value susp-value-a">-</span>
+            <span class="susp-value susp-value-b" hidden>-</span>
+            <div class="susp-bar-track">
+              <div class="susp-bar-fill susp-bar-fill-a"></div>
+              <div class="susp-bar-fill susp-bar-fill-b" hidden></div>
+            </div>
             <span class="susp-label">RL</span>
           </div>
           <div class="susp-wheel" data-wheel="rr">
-            <span class="susp-value">-</span>
-            <div class="susp-bar-track"><div class="susp-bar-fill"></div></div>
+            <span class="susp-value susp-value-a">-</span>
+            <span class="susp-value susp-value-b" hidden>-</span>
+            <div class="susp-bar-track">
+              <div class="susp-bar-fill susp-bar-fill-a"></div>
+              <div class="susp-bar-fill susp-bar-fill-b" hidden></div>
+            </div>
             <span class="susp-label">RR</span>
           </div>
         </div>
@@ -92,8 +122,17 @@
   </aside>
 </div>
 
+<dialog id="sessionTableModal">
+  <div class="modal-header">
+    <h2>Browse Sessions</h2>
+    <button type="button" id="sessionTableCloseBtn">Close</button>
+  </div>
+  <table id="sessionTable"></table>
+</dialog>
+
 <script src="/chart.umd.min.js"></script>
 <script src="/chartjs-plugin-zoom.min.js"></script>
+<script src="/simple-datatables.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
