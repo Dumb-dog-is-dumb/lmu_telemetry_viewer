@@ -125,7 +125,7 @@ main {
    with a sane floor so they don't collapse on short windows. Track Map and Grip Circle
    split that space evenly via flex: 1 1 0 below. */
 .map-panel {
-  width: 640px;
+  width: 860px;
   flex-shrink: 0;
   min-height: 700px;
   display: flex;
@@ -133,12 +133,82 @@ main {
   gap: 20px;
 }
 
-.map-box,
-.grip-box {
+.map-box {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Grip Circle and Suspension Travel sit side by side below the map, splitting the row's
+   width evenly; the row itself shares the remaining vertical space with the map above. */
+.side-row {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+}
+
+.grip-box,
+.susp-box {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 2x2 grid mirrors the car's layout: FL/FR up top, RL/RR below, so the panel reads like a
+   miniature plan view of the car rather than an arbitrary bar chart. */
+.susp-grid {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+}
+
+.susp-wheel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.susp-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.susp-bar-track {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 28px;
+  background: var(--border);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.susp-bar-fill {
+  width: 100%;
+  height: 0%;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+}
+
+.susp-label {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* position:relative + absolutely-filled canvas is the standard way to let Chart.js's
