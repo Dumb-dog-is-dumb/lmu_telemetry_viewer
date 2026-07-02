@@ -16,6 +16,15 @@ let currentWindowDuration = 0; // seconds, end-start of the loaded window
 let currentWindowDistance = 0; // meters, Lap Dist value at the end of the loaded window
 let lastChannelRows = {}; // key: channel key -> [{t, v}] with t relative to window start
 
+// Bumped at the start of every loadLap() call. Async work from a superseded call checks its
+// captured value against this before writing shared state (currentDistPoints, lastChannelRows,
+// currentMapPoints/currentGripPoints/currentSuspPoints) - without this, a slow-to-resolve
+// fetch from an old lap can land after a newer lap's fetches already updated the distance
+// mapping, so old (long) time values get clamped by distAtTime() against the new (short)
+// lap's range and pile up at one edge. Only reproduces in distance mode since time mode
+// never calls distAtTime().
+let loadGeneration = 0;
+
 function distAtTime(tSec) {
   const pts = currentDistPoints;
   if (pts.length === 0) return 0;
@@ -247,11 +256,12 @@ function ensureMapChart() {
   return mapChart;
 }
 
-async function loadMap(file, startTs, endTs) {
+async function loadMap(file, startTs, endTs, generation) {
   const [lonRows, latRows] = await Promise.all([
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("GPS Longitude")}&start=${startTs}&end=${endTs}`),
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("GPS Latitude")}&start=${startTs}&end=${endTs}`),
   ]);
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
 
   const n = Math.min(lonRows.length, latRows.length);
   if (n === 0) return;
@@ -394,11 +404,12 @@ function ensureGripChart() {
   return gripChart;
 }
 
-async function loadGrip(file, startTs, endTs) {
+async function loadGrip(file, startTs, endTs, generation) {
   const [latRows, longRows] = await Promise.all([
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Lat")}&start=${startTs}&end=${endTs}`),
     fetchJSON(`/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("G Force Long")}&start=${startTs}&end=${endTs}`),
   ]);
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
 
   const n = Math.min(latRows.length, longRows.length);
   if (n === 0) return;
@@ -465,10 +476,11 @@ function highlightSuspAtX(xVal) {
   setSuspCursor(nearestByKey(currentSuspPoints, xAxisMode === "distance" ? "d" : "t", xVal));
 }
 
-async function loadSusp(file, startTs, endTs) {
+async function loadSusp(file, startTs, endTs, generation) {
   const rows = await fetchJSON(
     `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Susp Pos")}&start=${startTs}&end=${endTs}`
   );
+  if (generation !== loadGeneration) return; // superseded by a newer loadLap() call
   if (rows.length === 0) return;
 
   let min = Infinity;
@@ -562,6 +574,7 @@ async function loadSession(file) {
 async function loadLap(lapValue, file) {
   if (!currentSession) return;
   file = file || sessionSelect.value;
+  const myGeneration = ++loadGeneration;
 
   let startTs, endTs;
   if (lapValue === "full" || !lapValue) {
@@ -581,6 +594,7 @@ async function loadLap(lapValue, file) {
   const distRows = await fetchJSON(
     `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent("Lap Dist")}&start=${startTs}&end=${endTs}`
   );
+  if (myGeneration !== loadGeneration) return; // a newer loadLap() call has already superseded this one
   const distPts = distRows.map((r) => ({ t: r.t - startTs, d: r.v }));
   // The channel query's rowid range (floor/ceil) can pull in one extra sample just past
   // the lap boundary. For continuous channels that's harmless, but Lap Dist resets to 0
@@ -608,15 +622,20 @@ async function loadLap(lapValue, file) {
       const rows = await fetchJSON(
         `/api/channel?file=${encodeURIComponent(file)}&channel=${encodeURIComponent(entry.key)}&start=${startTs}&end=${endTs}`
       );
+      if (myGeneration !== loadGeneration) return; // superseded by a newer loadLap() call
       lastChannelRows[entry.key] = rows.map((r) => ({ t: r.t - startTs, v: r.v }));
       renderChannel(entry);
     }),
-    loadMap(file, startTs, endTs),
-    loadGrip(file, startTs, endTs),
-    loadSusp(file, startTs, endTs),
+    loadMap(file, startTs, endTs, myGeneration),
+    loadGrip(file, startTs, endTs, myGeneration),
+    loadSusp(file, startTs, endTs, myGeneration),
   ]);
-  syncingZoom = false;
-  setStatus("");
+  // A superseded call must not clear syncingZoom out from under the newer load that's still
+  // in flight, nor clobber the status text the newer load is about to set.
+  if (myGeneration === loadGeneration) {
+    syncingZoom = false;
+    setStatus("");
+  }
 }
 
 function renderChannel(entry) {
