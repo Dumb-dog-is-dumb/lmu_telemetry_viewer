@@ -196,8 +196,8 @@ try {
             if ($path -eq "/" -or $path -eq "/index.html") {
                 Write-FileResponse $context (Join-Path $webDir "index.html")
             }
-            elseif ($path -eq "/app.js") {
-                Write-FileResponse $context (Join-Path $webDir "app.js")
+            elseif ($path -like "/js/*" -and $path -notmatch '\.\.') {
+                Write-FileResponse $context (Join-Path $webDir $path.TrimStart('/'))
             }
             elseif ($path -eq "/chart.umd.min.js") {
                 Write-FileResponse $context (Join-Path $webDir "chart.umd.min.js")
