@@ -126,15 +126,30 @@ SELECT 'TireCompoundRear' AS key, json_extract_string(value, '$.VM_REAR_TIRE_COM
     $sessionEndRows = $sessionEndJson | ConvertFrom-Json
     $sessionEnd = if ($sessionEndRows.Count -gt 0) { [double]$sessionEndRows[0].m } else { $t0 }
 
+    # "Lap Time" is an irregular/event channel: it only gets a new row when its value
+    # *changes*, so a run of consecutive invalidated laps (e.g. track-limit cuts) collapses
+    # to a single 0.0 row - most laps in a session can end up with no row here at all, not
+    # just an explicit 0.0. A lap only has an official/counted time if its endTs lines up
+    # with a "Lap Time" row whose value > 0; otherwise the raw ts-diff "duration" below is
+    # just wall-clock time and was never registered as a valid lap by the game (confirmed
+    # against the "Best LapTime" channel, which only advances on the same ts/value pairs).
+    $lapTimeJson = Invoke-DuckDb $DbPath "SELECT ts, value FROM `"Lap Time`" ORDER BY ts;"
+    $lapTimeRows = $lapTimeJson | ConvertFrom-Json
+    $lapTimeMap = @{}
+    foreach ($r in $lapTimeRows) { $lapTimeMap[[math]::Round([double]$r.ts, 4)] = [double]$r.value }
+
     $laps = @()
     for ($i = 0; $i -lt $lapRows.Count; $i++) {
         $startTs = [double]$lapRows[$i].ts
         $endTs = if ($i -lt $lapRows.Count - 1) { [double]$lapRows[$i + 1].ts } else { $sessionEnd }
+        $key = [math]::Round($endTs, 4)
+        $valid = $lapTimeMap.ContainsKey($key) -and $lapTimeMap[$key] -gt 0
         $laps += [PSCustomObject]@{
             lap     = $lapRows[$i].value
             startTs = $startTs
             endTs   = $endTs
             duration = [math]::Round($endTs - $startTs, 3)
+            valid   = $valid
         }
     }
 
@@ -278,8 +293,9 @@ try {
                 # {"value": [...], "Count": n} instead of a plain JSON array.
                 $ic = [System.Globalization.CultureInfo]::InvariantCulture
                 $lapParts = foreach ($lap in $info.laps) {
-                    "{{`"lap`":{0},`"startTs`":{1},`"endTs`":{2},`"duration`":{3}}}" -f `
-                        $lap.lap, $lap.startTs.ToString($ic), $lap.endTs.ToString($ic), $lap.duration.ToString($ic)
+                    "{{`"lap`":{0},`"startTs`":{1},`"endTs`":{2},`"duration`":{3},`"valid`":{4}}}" -f `
+                        $lap.lap, $lap.startTs.ToString($ic), $lap.endTs.ToString($ic), $lap.duration.ToString($ic), `
+                        $lap.valid.ToString().ToLowerInvariant()
                 }
                 $lapsJson = "[" + ($lapParts -join ",") + "]"
                 $body = "{{`"metadata`":{0},`"t0`":{1},`"sessionEnd`":{2},`"laps`":{3}}}" -f `
