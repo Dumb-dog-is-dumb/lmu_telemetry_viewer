@@ -490,7 +490,13 @@ async function loadSession(file) {
   for (const lap of info.laps) {
     const opt = document.createElement("option");
     opt.value = String(lap.lap);
-    opt.textContent = `Lap ${lap.lap} (${formatLapTime(lap.duration)})`;
+    // "duration" is just wall-clock time between lap markers. Laps the game didn't count
+    // (track-limit cuts, or the last lap if recording stopped mid-lap) never get an entry
+    // in the "Lap Time" channel, so their time never became official — flag that here
+    // instead of showing a number that looks like a real lap time but isn't one.
+    opt.textContent = lap.valid
+      ? `Lap ${lap.lap} (${formatLapTime(lap.duration)})`
+      : `Lap ${lap.lap} (${formatLapTime(lap.duration)}, not counted)`;
     lapSelect.appendChild(opt);
   }
 
