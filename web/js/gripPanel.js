@@ -64,12 +64,15 @@ function ensureGripChart() {
           pointRadius: 6,
         },
         {
+          // Hollow dashed ring (vs A's solid filled dot) so the two stay distinguishable even
+          // when the underlying G values are close enough that the markers overlap.
           label: "Cursor B",
           data: [],
-          backgroundColor: ACCENT_B,
-          borderColor: "#14161a",
-          borderWidth: 2,
-          pointRadius: 6,
+          backgroundColor: "transparent",
+          borderColor: ACCENT_B,
+          borderWidth: 2.5,
+          borderDash: [3, 2],
+          pointRadius: 9,
         },
       ],
     },
