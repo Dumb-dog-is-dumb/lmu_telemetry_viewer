@@ -172,7 +172,7 @@ main {
 .map-panel {
   width: 860px;
   flex-shrink: 0;
-  min-height: 700px;
+  min-height: 750px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -299,7 +299,7 @@ main {
 
 .chart-box canvas {
   width: 100% !important;
-  height: 110px !important;
+  height: 200px !important;
 }
 
 /* Must come after ".chart-box canvas" above: equal specificity, so source order decides

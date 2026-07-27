@@ -16,20 +16,25 @@ export function formatLapTime(totalSeconds) {
   return `${m}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
 }
 
-// Binary search for the point nearest `value` under the given key ("t" or "d"), assuming
+// Binary search for the index of the point nearest `value` under the given key, assuming
 // `points` is sorted ascending by that key (true for a single lap; may degrade near lap
 // resets in "distance" mode when viewing the full session, since Lap Dist isn't globally
 // monotonic there).
-export function nearestByKey(points, key, value) {
-  if (points.length === 0) return null;
+export function nearestIndexByKey(points, key, value) {
+  if (points.length === 0) return -1;
   let lo = 0;
   let hi = points.length - 1;
-  if (value <= points[lo][key]) return points[lo];
-  if (value >= points[hi][key]) return points[hi];
+  if (value <= points[lo][key]) return lo;
+  if (value >= points[hi][key]) return hi;
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1;
     if (points[mid][key] < value) lo = mid;
     else hi = mid;
   }
-  return value - points[lo][key] < points[hi][key] - value ? points[lo] : points[hi];
+  return value - points[lo][key] < points[hi][key] - value ? lo : hi;
+}
+
+export function nearestByKey(points, key, value) {
+  const idx = nearestIndexByKey(points, key, value);
+  return idx === -1 ? null : points[idx];
 }
